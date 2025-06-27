@@ -3,6 +3,8 @@ import os
 from azure.storage.blob import BlobServiceClient
 import time
 import psycopg2
+import polars
+import io
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
@@ -32,16 +34,54 @@ def get_postgres_connection():
 
 def extract_data_from_blob(filename):
     # may require polars chunking, may not depending on ram
+    CONTAINER_NAME = "nppes"
+    relevant_columns = [
+        "Entity Type Code",
+        "Provider Organization Name (Legal Business Name)",
+        "Provider Last Name (Legal Name)",
+        "Provider First Name",
+        "Provider Middle Name",
+        "Provider Name Prefix Text",
+        "Provider Name Suffix Text",
+        "Provider Credential Text",
+        "Provider Other Organization Name",
+        "Provider First Line Business Practice Location Address",
+        "Provider Second Line Business Practice Location Address",
+        "Provider Business Practice Location Address City Name",
+        "Provider Business Practice Location Address State Name",
+        "Provider Business Practice Location Address Postal Code",
+    ]
+    try:
+        blob_service_client = get_blob_service_client()
+        blob_client = blob_service_client.get_blob_client(
+            container=CONTAINER_NAME, blob=filename
+        )
+
+        blob_data = blob_client.download_blob().readall()
+        file_in_memory = io.BytesIO(blob_data)
+        df = polars.read_csv(
+            file_in_memory, columns=relevant_columns, batched=True, batch_size=100000
+        )
+        return df
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
+
+
+def load_subsetted_blob_data_to_postgres(data):
     pass
 
 
 @app.route(route="NPPES_Data_Cleaning")
 def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
     start_time = time.time()  # Tick
-    target_file = req.params.get("nppes_sample.csv")
     try:
         # Transformation Logic & Stored Procs from Main DB Table Here
-        extract_data_from_blob(target_file)
+        body = req.get_json()
+        target_file = body.get("target_file")
+        subsetted_blob_data = extract_data_from_blob(target_file)
+        load_subsetted_blob_data_to_postgres(subsetted_blob_data)
 
         connection = get_postgres_connection()
         cursor = connection.cursor()
