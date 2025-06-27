@@ -15,19 +15,6 @@ def get_blob_service_client():
     return BlobServiceClient.from_connection_string(conn_str)
 
 
-# this fn can be deleted or moved later
-def test_blob_service_client():
-    try:
-        blob_service_client = get_blob_service_client()
-        container_client = blob_service_client.get_container_client("nppes")
-        # List blobs in the 'nppes' container to verify connection
-        blobs = container_client.list_blobs()
-        blob_names = [blob.name for blob in blobs]
-        return f"Connected successfully to 'nppes' container. Blobs: {blob_names}"
-    except Exception as e:
-        return f"Failed to connect to 'nppes' container: {str(e)}"
-
-
 # add target connection (postgres)
 def get_postgres_connection():
     try:
@@ -69,29 +56,29 @@ def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
         error_message = f"Internal server error: {str(e)}"
         return func.HttpResponse(error_message, status_code=500)
 
-try:
-        logging.info('NPPES Data Cleaning function triggered')
-        
-        connection = get_postgres_connection()
-        cursor = connection.cursor()
-        
-        cursor.execute("SELECT version()")
-        version = cursor.fetchone()[0]
-        logging.info(f"PostgreSQL version: {version}")
-        
-        # Data processing goes here
-        # 1. Read data from Azure Blob Storage
-        # 2. Process/clean the data
-        # 3. Insert into PostgreSQL using cursor.execute()
-        
-        cursor.close()
-        connection.close()
-        
-        return func.HttpResponse(
-            "NPPES Data Cleaning completed successfully",
-            status_code=200
-        )
-        
+    try:
+            logging.info('NPPES Data Cleaning function triggered')
+            
+            connection = get_postgres_connection()
+            cursor = connection.cursor()
+            
+            cursor.execute("SELECT version()")
+            version = cursor.fetchone()[0]
+            logging.info(f"PostgreSQL version: {version}")
+            
+            # Data processing goes here
+            # 1. Read data from Azure Blob Storage
+            # 2. Process/clean the data
+            # 3. Insert into PostgreSQL using cursor.execute()
+            
+            cursor.close()
+            connection.close()
+            
+            return func.HttpResponse(
+                "NPPES Data Cleaning completed successfully",
+                status_code=200
+            )
+            
     except Exception as e:
         logging.error(f"Error in NPPES_Data_Cleaning: {str(e)}")
         return func.HttpResponse(
