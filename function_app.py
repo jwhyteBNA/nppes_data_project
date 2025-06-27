@@ -2,7 +2,7 @@ import azure.functions as func
 import os
 from azure.storage.blob import BlobServiceClient
 import time
-import psycopg2
+from sqlalchemy import create_engine
 import polars
 import io
 
@@ -19,13 +19,13 @@ def get_blob_service_client():
 def get_postgres_connection():
     try:
         connection_string = (
-            f"postgresql://{os.environ.get('POSTGRES_USER')}:"
+            f"postgresql+psycopg2://{os.environ.get('POSTGRES_USER')}:"
             f"{os.environ.get('POSTGRES_PASSWORD')}@"
             f"{os.environ.get('POSTGRES_HOST')}:"
             f"{os.environ.get('POSTGRES_PORT')}/"
             f"{os.environ.get('POSTGRES_DB')}"
         )
-        connection = psycopg2.connect(connection_string)
+        connection = create_engine(connection_string)
         return connection
     except Exception as e:
         error_message = f"Failed to connect to PostgreSQL: {str(e)}"
@@ -90,9 +90,7 @@ def extract_data_from_blob(filename):
 
         blob_data = blob_client.download_blob().readall()
         file_in_memory = io.BytesIO(blob_data)
-        df = polars.read_csv(
-            file_in_memory, columns=relevant_columns, batched=True, batch_size=100000
-        )
+        df = polars.read_csv(file_in_memory, columns=relevant_columns)
         return df
 
     except Exception as e:
@@ -116,7 +114,6 @@ def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
         body = req.get_json()
         target_file = body.get("target_file")
         connection = get_postgres_connection()
-        cursor = connection.cursor()
         subsetted_blob_data_dataframe = extract_data_from_blob(target_file)
         load_subsetted_blob_data_to_postgres(
             subsetted_blob_data_dataframe,
@@ -124,15 +121,10 @@ def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
             connection=connection,
         )
 
-        cursor.execute("SELECT version()")
-
         # Data processing goes here
         # 1. Read data from Azure Blob Storage
         # 2. Process/clean the data
         # 3. Insert into PostgreSQL using cursor.execute()
-
-        cursor.close()
-        connection.close()
 
         elapsed = time.time() - start_time  # Tock
         response = f"Elapsed time: {elapsed:.2f} seconds"

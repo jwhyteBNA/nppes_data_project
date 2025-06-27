@@ -8,3 +8,5 @@ sqlalchemy
 openpyxl
 azure-storage-blob
 polars
+pandas
+pyarrow
