@@ -30,7 +30,6 @@ def get_postgres_connection():
         raise ValueError(error_message)
 
 
-
 def extract_data_from_blob(target_file):
     pass
 
@@ -38,25 +37,24 @@ def extract_data_from_blob(target_file):
 @app.route(route="NPPES_Data_Cleaning")
 def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
     start_time = time.time()  # Tick
-    target_file = ''
+    target_file = ""
     try:
-    # Transformation Logic & Stored Procs from Main DB Table Here
-        extract_data_from_blob()
-
+        # Transformation Logic & Stored Procs from Main DB Table Here
+        extract_data_from_blob(target_file)
 
         connection = get_postgres_connection()
         cursor = connection.cursor()
-        
+
         cursor.execute("SELECT version()")
-        
+
         # Data processing goes here
         # 1. Read data from Azure Blob Storage
         # 2. Process/clean the data
         # 3. Insert into PostgreSQL using cursor.execute()
-        
+
         cursor.close()
         connection.close()
-    
+
         elapsed = time.time() - start_time  # Tock
         response = f"Elapsed time: {elapsed:.2f} seconds"
         return func.HttpResponse(response, status_code=200)
