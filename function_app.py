@@ -100,8 +100,12 @@ def extract_data_from_blob(filename):
         return None
 
 
-def load_subsetted_blob_data_to_postgres(data):
-    pass
+def load_subsetted_blob_data_to_postgres(df, target_table, connection):
+    try:
+        df.write_database(target_table, connection, if_table_exists="replace")
+    except Exception as e:
+        print(f"Failed to write DataFrame to Postgres: {e}")
+        raise
 
 
 @app.route(route="NPPES_Data_Cleaning")
@@ -111,11 +115,14 @@ def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
         # Transformation Logic & Stored Procs from Main DB Table Here
         body = req.get_json()
         target_file = body.get("target_file")
-        subsetted_blob_data_dataframe = extract_data_from_blob(target_file)
-        load_subsetted_blob_data_to_postgres(subsetted_blob_data_dataframe)
-
         connection = get_postgres_connection()
         cursor = connection.cursor()
+        subsetted_blob_data_dataframe = extract_data_from_blob(target_file)
+        load_subsetted_blob_data_to_postgres(
+            subsetted_blob_data_dataframe,
+            target_table="nppes_providers",
+            connection=connection,
+        )
 
         cursor.execute("SELECT version()")
 
