@@ -30,14 +30,15 @@ def get_postgres_connection():
         raise ValueError(error_message)
 
 
-def extract_data_from_blob(target_file):
+def extract_data_from_blob(filename):
+    # may require polars chunking, may not depending on ram
     pass
 
 
 @app.route(route="NPPES_Data_Cleaning")
 def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
     start_time = time.time()  # Tick
-    target_file = ""
+    target_file = req.params.get("nppes_sample.csv")
     try:
         # Transformation Logic & Stored Procs from Main DB Table Here
         extract_data_from_blob(target_file)
