@@ -3,8 +3,8 @@
 # Manually managing azure-functions-worker may cause unexpected issues
 
 azure-functions
-pandas
 psycopg2-binary
 sqlalchemy
 openpyxl
 azure-storage-blob
+polars
