@@ -1,6 +1,5 @@
     CREATE TABLE IF NOT EXISTS nppes_providers (
-        id SERIAL PRIMARY KEY,
-        npi VARCHAR(10),
+        npi VARCHAR(10) PRIMARY KEYS,
         entity_type_code INTEGER NOT NULL,
         provider_organization_name TEXT,
         provider_last_name VARCHAR(100),

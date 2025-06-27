@@ -36,6 +36,7 @@ def extract_data_from_blob(filename):
     # may require polars chunking, may not depending on ram
     CONTAINER_NAME = "nppes"
     relevant_columns = [
+        "NPI",
         "Entity Type Code",
         "Provider Organization Name (Legal Business Name)",
         "Provider Last Name (Legal Name)",
