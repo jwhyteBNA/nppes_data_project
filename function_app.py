@@ -80,8 +80,8 @@ def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
         # Transformation Logic & Stored Procs from Main DB Table Here
         body = req.get_json()
         target_file = body.get("target_file")
-        subsetted_blob_data = extract_data_from_blob(target_file)
-        load_subsetted_blob_data_to_postgres(subsetted_blob_data)
+        subsetted_blob_data_dataframe = extract_data_from_blob(target_file)
+        load_subsetted_blob_data_to_postgres(subsetted_blob_data_dataframe)
 
         connection = get_postgres_connection()
         cursor = connection.cursor()
