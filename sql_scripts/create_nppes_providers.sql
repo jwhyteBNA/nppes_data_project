@@ -1,5 +1,5 @@
     CREATE TABLE IF NOT EXISTS nppes_providers (
-        npi VARCHAR(10) PRIMARY KEYS,
+        npi VARCHAR(10) PRIMARY KEY,
         entity_type_code INTEGER NOT NULL,
         provider_organization_name TEXT,
         provider_last_name VARCHAR(100),
