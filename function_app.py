@@ -1,6 +1,7 @@
 import azure.functions as func
 import os
 from azure.storage.blob import BlobServiceClient
+import time
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
@@ -34,11 +35,14 @@ def test_blob_service_client():
 
 @app.route(route="NPPES_Data_Cleaning")
 def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
+    start_time = time.time()  # Tick
     try:
         # Transformation Logic & Stored Procs from Main DB Table Here
 
         result = test_blob_service_client()
-        return func.HttpResponse(result, status_code=200)
+        elapsed = time.time() - start_time  # Tock
+        response = f"{result}\nElapsed time: {elapsed:.2f} seconds"
+        return func.HttpResponse(response, status_code=200)
     except Exception as e:
         error_message = f"Internal server error: {str(e)}"
         return func.HttpResponse(error_message, status_code=500)
