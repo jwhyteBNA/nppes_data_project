@@ -121,6 +121,7 @@ def load_chunked_blob_data_to_postgres(
         chunk_count = 0
         offset = 0
 
+        # total_rows could be hard-set to a number for demonstration (so long as it exceeds all other dependant file rows. (e.g., total_rows = 500,000))
         total_rows = lazy_df.select(polars.len()).collect().item()
         print(f"Total rows to process: {total_rows}")
 
