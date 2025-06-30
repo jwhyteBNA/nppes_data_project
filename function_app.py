@@ -32,7 +32,7 @@ def get_postgres_connection():
         raise ValueError(error_message)
 
 
-def extract_data_from_blob_chunked(filename):
+def extract_data_from_blob(filename):
     CONTAINER_NAME = "nppes"
     relevant_columns = [
         "NPI",
@@ -161,7 +161,7 @@ def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
         target_file = body.get("target_file")
         connection = get_postgres_connection()
 
-        lazy_df = extract_data_from_blob_chunked(target_file)
+        lazy_df = extract_data_from_blob(target_file)
         if lazy_df is not None:
             load_chunked_blob_data_to_postgres(
                 lazy_df,
