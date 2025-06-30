@@ -5,6 +5,8 @@ import time
 from sqlalchemy import create_engine
 import polars
 import io
+import psycopg2
+from io import StringIO
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
@@ -29,6 +31,22 @@ def get_postgres_connection():
         return connection
     except Exception as e:
         error_message = f"Failed to connect to PostgreSQL: {str(e)}"
+        raise ValueError(error_message)
+
+
+def get_psycopg2_connection():
+    """Get direct psycopg2 connection for fast COPY operations"""
+    try:
+        connection_string = (
+            f"host={os.environ.get('POSTGRES_HOST')} "
+            f"port={os.environ.get('POSTGRES_PORT')} "
+            f"dbname={os.environ.get('POSTGRES_DB')} "
+            f"user={os.environ.get('POSTGRES_USER')} "
+            f"password={os.environ.get('POSTGRES_PASSWORD')}"
+        )
+        return psycopg2.connect(connection_string)
+    except Exception as e:
+        error_message = f"Failed to connect to PostgreSQL with psycopg2: {str(e)}"
         raise ValueError(error_message)
 
 
@@ -114,42 +132,71 @@ def extract_data_from_blob(filename):
 def load_chunked_blob_data_to_postgres(
     lazy_df, target_table, connection, chunk_size=100_000
 ):
+    """Fast bulk loading using psycopg2 COPY instead of slow write_database"""
     try:
         print(f"Starting to load data to {target_table} in chunks of {chunk_size}")
-
-        first_chunk = True
+        
+        # Get direct psycopg2 connection for COPY
+        pg_conn = get_psycopg2_connection()
+        
         chunk_count = 0
-        offset = 0
-
-        # total_rows could be hard-set to a number for demonstration (so long as it exceeds all other dependant file rows. (e.g., total_rows = 500,000))
-        total_rows = lazy_df.select(polars.len()).collect().item()
-        print(f"Total rows to process: {total_rows}")
-
-        while offset < total_rows:
+        total_rows_processed = 0
+        
+        # Process in streaming chunks without counting total rows first
+        while True:
             chunk_count += 1
-            end_offset = min(offset + chunk_size, total_rows)
-
-            print(f"Processing chunk {chunk_count} (rows {offset}-{end_offset})")
-
-            # Collect only the current slice
-            batch_df = lazy_df.slice(offset, chunk_size).collect()
-
+            
+            # Get chunk using streaming approach
+            batch_df = lazy_df.slice(total_rows_processed, chunk_size).collect()
+            
             if batch_df.is_empty():
+                print("No more data to process")
                 break
-
-            batch_df.write_database(
-                target_table,
-                connection,
-                if_table_exists="replace" if first_chunk else "append",
-            )
-
-            first_chunk = False
-            offset += chunk_size
-
-        print(f"Successfully loaded all {total_rows} rows to {target_table}")
-
+                
+            current_chunk_size = len(batch_df)
+            print(f"Processing chunk {chunk_count} ({current_chunk_size:,} rows)")
+            
+            # Convert to CSV in memory for COPY
+            output = StringIO()
+            batch_df.write_csv(output, separator='\t', include_header=False)
+            output.seek(0)
+            
+            # Use COPY for blazing fast bulk insert
+            with pg_conn.cursor() as cursor:
+                try:
+                    if chunk_count == 1:
+                        # Truncate table on first chunk if needed
+                        cursor.execute(f"TRUNCATE TABLE {target_table}")
+                    
+                    # Bulk copy data
+                    cursor.copy_from(
+                        output, 
+                        target_table,
+                        columns=batch_df.columns,
+                        sep='\t',
+                        null=''
+                    )
+                    pg_conn.commit()
+                    
+                    total_rows_processed += current_chunk_size
+                    print(f"[SUCCESS] Successfully loaded chunk {chunk_count} ({current_chunk_size:,} rows)")
+                    
+                except Exception as e:
+                    pg_conn.rollback()
+                    print(f"Error loading chunk {chunk_count}: {e}")
+                    raise
+            
+            # Break if we got less than chunk_size (last chunk)
+            if current_chunk_size < chunk_size:
+                break
+        
+        pg_conn.close()
+        print(f"COMPLETE: Successfully loaded all {total_rows_processed:,} rows to {target_table}")
+        
     except Exception as e:
         print(f"Failed to write DataFrame to Postgres: {e}")
+        if 'pg_conn' in locals():
+            pg_conn.close()
         raise
 
 
@@ -168,7 +215,7 @@ def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
                 lazy_df,
                 target_table="nppes_providers",
                 connection=connection,
-                chunk_size=50_000,
+                chunk_size=50_000,  # Smaller chunks for better memory management
             )
 
         # Data processing goes here
