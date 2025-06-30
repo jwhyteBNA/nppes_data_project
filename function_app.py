@@ -119,6 +119,55 @@ def load_chunked_blob_data_to_postgres(
     try:
         print(f"Starting to load data to {target_table} in chunks of {chunk_size:,}")
         
+        # Column mapping from CSV headers to database column names
+        column_mapping = {
+            "NPI": "npi",
+            "Entity Type Code": "entity_type_code",
+            "Provider Organization Name (Legal Business Name)": "provider_organization_name",
+            "Provider Last Name (Legal Name)": "provider_last_name",
+            "Provider First Name": "provider_first_name",
+            "Provider Middle Name": "provider_middle_name",
+            "Provider Name Prefix Text": "provider_name_prefix",
+            "Provider Name Suffix Text": "provider_name_suffix",
+            "Provider Credential Text": "provider_credential",
+            "Provider Other Organization Name": "provider_other_organization_name",
+            "Provider First Line Business Practice Location Address": "provider_location_address_1",
+            "Provider Second Line Business Practice Location Address": "provider_location_address_2",
+            "Provider Business Practice Location Address City Name": "provider_city",
+            "Provider Business Practice Location Address State Name": "provider_state",
+            "Provider Business Practice Location Address Postal Code": "provider_postal_code",
+            "Healthcare Provider Taxonomy Code_1": "healthcare_provider_taxonomy_code_1",
+            "Healthcare Provider Primary Taxonomy Switch_1": "healthcare_provider_primary_taxonomy_switch_1",
+            "Healthcare Provider Taxonomy Code_2": "healthcare_provider_taxonomy_code_2",
+            "Healthcare Provider Primary Taxonomy Switch_2": "healthcare_provider_primary_taxonomy_switch_2",
+            "Healthcare Provider Taxonomy Code_3": "healthcare_provider_taxonomy_code_3",
+            "Healthcare Provider Primary Taxonomy Switch_3": "healthcare_provider_primary_taxonomy_switch_3",
+            "Healthcare Provider Taxonomy Code_4": "healthcare_provider_taxonomy_code_4",
+            "Healthcare Provider Primary Taxonomy Switch_4": "healthcare_provider_primary_taxonomy_switch_4",
+            "Healthcare Provider Taxonomy Code_5": "healthcare_provider_taxonomy_code_5",
+            "Healthcare Provider Primary Taxonomy Switch_5": "healthcare_provider_primary_taxonomy_switch_5",
+            "Healthcare Provider Taxonomy Code_6": "healthcare_provider_taxonomy_code_6",
+            "Healthcare Provider Primary Taxonomy Switch_6": "healthcare_provider_primary_taxonomy_switch_6",
+            "Healthcare Provider Taxonomy Code_7": "healthcare_provider_taxonomy_code_7",
+            "Healthcare Provider Primary Taxonomy Switch_7": "healthcare_provider_primary_taxonomy_switch_7",
+            "Healthcare Provider Taxonomy Code_8": "healthcare_provider_taxonomy_code_8",
+            "Healthcare Provider Primary Taxonomy Switch_8": "healthcare_provider_primary_taxonomy_switch_8",
+            "Healthcare Provider Taxonomy Code_9": "healthcare_provider_taxonomy_code_9",
+            "Healthcare Provider Primary Taxonomy Switch_9": "healthcare_provider_primary_taxonomy_switch_9",
+            "Healthcare Provider Taxonomy Code_10": "healthcare_provider_taxonomy_code_10",
+            "Healthcare Provider Primary Taxonomy Switch_10": "healthcare_provider_primary_taxonomy_switch_10",
+            "Healthcare Provider Taxonomy Code_11": "healthcare_provider_taxonomy_code_11",
+            "Healthcare Provider Primary Taxonomy Switch_11": "healthcare_provider_primary_taxonomy_switch_11",
+            "Healthcare Provider Taxonomy Code_12": "healthcare_provider_taxonomy_code_12",
+            "Healthcare Provider Primary Taxonomy Switch_12": "healthcare_provider_primary_taxonomy_switch_12",
+            "Healthcare Provider Taxonomy Code_13": "healthcare_provider_taxonomy_code_13",
+            "Healthcare Provider Primary Taxonomy Switch_13": "healthcare_provider_primary_taxonomy_switch_13",
+            "Healthcare Provider Taxonomy Code_14": "healthcare_provider_taxonomy_code_14",
+            "Healthcare Provider Primary Taxonomy Switch_14": "healthcare_provider_primary_taxonomy_switch_14",
+            "Healthcare Provider Taxonomy Code_15": "healthcare_provider_taxonomy_code_15",
+            "Healthcare Provider Primary Taxonomy Switch_15": "healthcare_provider_primary_taxonomy_switch_15",
+        }
+        
         # Get direct psycopg2 connection for COPY
         pg_conn = get_psycopg2_connection()
         
@@ -139,6 +188,9 @@ def load_chunked_blob_data_to_postgres(
             current_chunk_size = len(batch_df)
             print(f"Processing chunk {chunk_count} ({current_chunk_size:,} rows)")
             
+            # Rename columns to match database schema
+            batch_df = batch_df.rename(column_mapping)
+            
             # Convert to CSV in memory for COPY
             output = StringIO()
             batch_df.write_csv(output, separator='\t', include_header=False)
@@ -151,13 +203,13 @@ def load_chunked_blob_data_to_postgres(
                         # Truncate table on first chunk if needed
                         cursor.execute(f"TRUNCATE TABLE {target_table}")
                     
-                    # Bulk copy data
+                    # Bulk copy data with correct column names
                     cursor.copy_from(
                         output, 
                         target_table,
-                        columns=batch_df.columns,
+                        columns=list(batch_df.columns),  # Use renamed columns
                         sep='\t',
-                        null=''
+                        null=''  # Treat empty strings as NULL
                     )
                     pg_conn.commit()
                     
