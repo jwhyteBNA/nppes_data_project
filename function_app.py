@@ -32,8 +32,7 @@ def get_postgres_connection():
         raise ValueError(error_message)
 
 
-def extract_data_from_blob(filename):
-    # may require polars chunking, may not depending on ram
+def extract_data_from_blob_chunked(filename):
     CONTAINER_NAME = "nppes"
     relevant_columns = [
         "NPI",
@@ -82,25 +81,72 @@ def extract_data_from_blob(filename):
         "Healthcare Provider Taxonomy Code_15",
         "Healthcare Provider Primary Taxonomy Switch_15",
     ]
+
     try:
+        print(f"Starting chunked blob data extraction for file: {filename}")
         blob_service_client = get_blob_service_client()
         blob_client = blob_service_client.get_blob_client(
             container=CONTAINER_NAME, blob=filename
         )
 
-        blob_data = blob_client.download_blob().readall()
-        file_in_memory = io.BytesIO(blob_data)
-        df = polars.read_csv(file_in_memory, columns=relevant_columns)
-        return df
+        file_buffer = io.BytesIO()
+
+        print("Downloading blob data...")
+        blob_stream = blob_client.download_blob()
+        print(f"Blob download complete. Data size: {len(blob_stream):,} bytes")
+
+        for chunk in blob_stream.chunks():
+            file_buffer.write(chunk)
+
+        # Reset buffer position to beginning
+        file_buffer.seek(0)
+
+        print("Creating lazy CSV scan...")
+        lazy_df = polars.scan_csv(file_buffer).select(relevant_columns)
+
+        return lazy_df
 
     except Exception as e:
         print(f"An error occurred: {e}")
         return None
 
 
-def load_subsetted_blob_data_to_postgres(df, target_table, connection):
+def load_chunked_blob_data_to_postgres(
+    lazy_df, target_table, connection, chunk_size=100_000
+):
     try:
-        df.write_database(target_table, connection, if_table_exists="replace")
+        print(f"Starting to load data to {target_table} in chunks of {chunk_size}")
+
+        first_chunk = True
+        chunk_count = 0
+        offset = 0
+
+        total_rows = lazy_df.select(polars.len()).collect().item()
+        print(f"Total rows to process: {total_rows}")
+
+        while offset < total_rows:
+            chunk_count += 1
+            end_offset = min(offset + chunk_size, total_rows)
+
+            print(f"Processing chunk {chunk_count} (rows {offset}-{end_offset})")
+
+            # Collect only the current slice
+            batch_df = lazy_df.slice(offset, chunk_size).collect()
+
+            if batch_df.is_empty():
+                break
+
+            batch_df.write_database(
+                target_table,
+                connection,
+                if_table_exists="replace" if first_chunk else "append",
+            )
+
+            first_chunk = False
+            offset += chunk_size
+
+        print(f"Successfully loaded all {total_rows} rows to {target_table}")
+
     except Exception as e:
         print(f"Failed to write DataFrame to Postgres: {e}")
         raise
@@ -114,12 +160,15 @@ def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
         body = req.get_json()
         target_file = body.get("target_file")
         connection = get_postgres_connection()
-        subsetted_blob_data_dataframe = extract_data_from_blob(target_file)
-        load_subsetted_blob_data_to_postgres(
-            subsetted_blob_data_dataframe,
-            target_table="nppes_providers",
-            connection=connection,
-        )
+
+        lazy_df = extract_data_from_blob_chunked(target_file)
+        if lazy_df is not None:
+            load_chunked_blob_data_to_postgres(
+                lazy_df,
+                target_table="nppes_providers",
+                connection=connection,
+                chunk_size=50_000,
+            )
 
         # Data processing goes here
         # 1. Read data from Azure Blob Storage
