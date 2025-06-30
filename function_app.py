@@ -2,7 +2,6 @@ import azure.functions as func
 import os
 from azure.storage.blob import BlobServiceClient
 import time
-from sqlalchemy import create_engine
 import polars
 import io
 import psycopg2
@@ -16,22 +15,6 @@ def get_blob_service_client():
     if not conn_str:
         raise ValueError("AzureWebJobsStorage environment variable is not set.")
     return BlobServiceClient.from_connection_string(conn_str)
-
-
-def get_postgres_connection():
-    try:
-        connection_string = (
-            f"postgresql+psycopg2://{os.environ.get('POSTGRES_USER')}:"
-            f"{os.environ.get('POSTGRES_PASSWORD')}@"
-            f"{os.environ.get('POSTGRES_HOST')}:"
-            f"{os.environ.get('POSTGRES_PORT')}/"
-            f"{os.environ.get('POSTGRES_DB')}"
-        )
-        connection = create_engine(connection_string)
-        return connection
-    except Exception as e:
-        error_message = f"Failed to connect to PostgreSQL: {str(e)}"
-        raise ValueError(error_message)
 
 
 def get_psycopg2_connection():
@@ -130,11 +113,11 @@ def extract_data_from_blob(filename):
 
 
 def load_chunked_blob_data_to_postgres(
-    lazy_df, target_table, connection, chunk_size=100_000
+    lazy_df, target_table, chunk_size=100_000
 ):
     """Fast bulk loading using psycopg2 COPY instead of slow write_database"""
     try:
-        print(f"Starting to load data to {target_table} in chunks of {chunk_size}")
+        print(f"Starting to load data to {target_table} in chunks of {chunk_size:,}")
         
         # Get direct psycopg2 connection for COPY
         pg_conn = get_psycopg2_connection()
@@ -207,15 +190,13 @@ def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
         # Transformation Logic & Stored Procs from Main DB Table Here
         body = req.get_json()
         target_file = body.get("target_file")
-        connection = get_postgres_connection()
 
         lazy_df = extract_data_from_blob(target_file)
         if lazy_df is not None:
             load_chunked_blob_data_to_postgres(
                 lazy_df,
                 target_table="nppes_providers",
-                connection=connection,
-                chunk_size=50_000,  # Smaller chunks for better memory management
+                chunk_size=50_000,  # Now matches the function signature
             )
 
         # Data processing goes here
