@@ -6,8 +6,99 @@ import polars
 import io
 import psycopg2
 from io import StringIO
+import requests
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+API_URL = f"{os.getenv('API_URL')}"
+
+
+def fetch_api_data():
+    headers = {"Content-Type": "application/json"}
+    response = requests.get(API_URL, headers=headers)
+    response.raise_for_status()
+    return response.json()
+
+
+def load_api_data(data):
+    headers = data[0]
+    rows = data[1:]
+    try:
+        df = polars.DataFrame(dict(zip(headers, zip(*rows))))
+
+        # Rename API fields to match database schema
+        column_mapping = {
+            "NAME": "name",
+            "B01001_001E": "population",
+            "state": "state_fips",
+            "county": "county_fips",
+        }
+        df = df.rename(column_mapping)
+
+        # Select only the columns we need
+        db_columns = ["name", "population", "state_fips", "county_fips"]
+        df = df.select(db_columns)
+
+        # Convert population to integer safely
+        df = df.with_columns([
+            df["population"].cast(polars.Int32, strict=False)
+        ])
+
+        # Drop rows with any missing required values
+        df = df.filter(
+            df["population"].is_not_null() &
+            df["name"].is_not_null() &
+            df["state_fips"].is_not_null() &
+            df["county_fips"].is_not_null()
+        )
+
+        # Cast to strings, strip spaces, fill nulls with ""
+        df = df.with_columns([
+            df[col].cast(str).fill_null("").str.strip_chars().alias(col) for col in db_columns
+        ])
+
+        # Filter out rows where all fields are empty (just in case)
+        df = df.filter(
+            (df["name"].str.len_chars() > 0) |
+            (df["population"].str.len_chars() > 0) |
+            (df["state_fips"].str.len_chars() > 0) |
+            (df["county_fips"].str.len_chars() > 0)
+        )
+
+        # Step 1: Write cleaned CSV to StringIO
+        output = StringIO()
+        df.write_csv(output, separator="\t", include_header=False)
+        output.seek(0)
+
+        # Step 2: Strip blank lines
+        cleaned_lines = [
+            line for line in output.getvalue().splitlines()
+            if line.strip() and len(line.split("\t")) == 4
+        ]
+        clean_output = StringIO("\n".join(cleaned_lines) + "\n")
+
+        # Step 3: Load to Postgres
+        target_table = "census_county_population"
+        pg_conn = get_psycopg2_connection()
+
+        with pg_conn.cursor() as cursor:
+            try:
+                cursor.copy_from(
+                    clean_output, target_table, columns=db_columns, sep="\t", null=""
+                )
+                pg_conn.commit()
+                print(f"✅ Loaded {len(cleaned_lines)} clean rows into {target_table}")
+            except Exception as e:
+                pg_conn.rollback()
+                print(f"❌ COPY error: {e}")
+                raise
+
+        pg_conn.close()
+
+    except Exception as e:
+        print(f"❌ Failed to load API data: {e}")
+        if "pg_conn" in locals():
+            pg_conn.close()
+        raise
 
 
 def get_blob_service_client():
@@ -265,6 +356,9 @@ def load_chunked_blob_data_to_postgres(lazy_df, target_table, chunk_size=100_000
 def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
     start_time = time.time()  # Tick
     try:
+        api_data = fetch_api_data()
+        load_api_data(api_data)
+
         body = req.get_json()
 
         # First & Large Data Target
