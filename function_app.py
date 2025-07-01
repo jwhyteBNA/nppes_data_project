@@ -33,7 +33,42 @@ def get_psycopg2_connection():
         raise ValueError(error_message)
 
 
-def extract_data_from_blob(filename):
+def extract_csv_data_from_blob(filename, relevant_columns, column_mapping):
+    CONTAINER_NAME = "nppes"
+    try:
+        print(f"Starting chunked blob data extraction for file: {filename}")
+        blob_service_client = get_blob_service_client()
+        blob_client = blob_service_client.get_blob_client(
+            container=CONTAINER_NAME, blob=filename
+        )
+
+        file_buffer = io.BytesIO()
+
+        blob_stream = blob_client.download_blob()
+
+        for chunk in blob_stream.chunks():
+            file_buffer.write(chunk)
+
+        # Reset buffer position to beginning
+        file_buffer.seek(0)
+
+        if relevant_columns == []:
+            lazy_df = polars.scan_csv(file_buffer)
+        else:
+            lazy_df = (
+                polars.scan_csv(file_buffer)
+                .select(relevant_columns)
+                .rename(column_mapping)
+            )
+
+        return lazy_df
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
+
+
+def extract_parquet_data_from_blob(filename):
     CONTAINER_NAME = "nppes"
     relevant_columns = [
         "NPI",
@@ -83,6 +118,54 @@ def extract_data_from_blob(filename):
         "Healthcare Provider Primary Taxonomy Switch_15",
     ]
 
+    column_mapping = {
+        "NPI": "npi",
+        "Entity Type Code": "entity_type_code",
+        "Provider Organization Name (Legal Business Name)": "provider_organization_name",
+        "Provider Last Name (Legal Name)": "provider_last_name",
+        "Provider First Name": "provider_first_name",
+        "Provider Middle Name": "provider_middle_name",
+        "Provider Name Prefix Text": "provider_name_prefix",
+        "Provider Name Suffix Text": "provider_name_suffix",
+        "Provider Credential Text": "provider_credential",
+        "Provider Other Organization Name": "provider_other_organization_name",
+        "Provider First Line Business Practice Location Address": "provider_location_address_1",
+        "Provider Second Line Business Practice Location Address": "provider_location_address_2",
+        "Provider Business Practice Location Address City Name": "provider_city",
+        "Provider Business Practice Location Address State Name": "provider_state",
+        "Provider Business Practice Location Address Postal Code": "provider_postal_code",
+        "Healthcare Provider Taxonomy Code_1": "healthcare_provider_taxonomy_code_1",
+        "Healthcare Provider Primary Taxonomy Switch_1": "healthcare_provider_primary_taxonomy_switch_1",
+        "Healthcare Provider Taxonomy Code_2": "healthcare_provider_taxonomy_code_2",
+        "Healthcare Provider Primary Taxonomy Switch_2": "healthcare_provider_primary_taxonomy_switch_2",
+        "Healthcare Provider Taxonomy Code_3": "healthcare_provider_taxonomy_code_3",
+        "Healthcare Provider Primary Taxonomy Switch_3": "healthcare_provider_primary_taxonomy_switch_3",
+        "Healthcare Provider Taxonomy Code_4": "healthcare_provider_taxonomy_code_4",
+        "Healthcare Provider Primary Taxonomy Switch_4": "healthcare_provider_primary_taxonomy_switch_4",
+        "Healthcare Provider Taxonomy Code_5": "healthcare_provider_taxonomy_code_5",
+        "Healthcare Provider Primary Taxonomy Switch_5": "healthcare_provider_primary_taxonomy_switch_5",
+        "Healthcare Provider Taxonomy Code_6": "healthcare_provider_taxonomy_code_6",
+        "Healthcare Provider Primary Taxonomy Switch_6": "healthcare_provider_primary_taxonomy_switch_6",
+        "Healthcare Provider Taxonomy Code_7": "healthcare_provider_taxonomy_code_7",
+        "Healthcare Provider Primary Taxonomy Switch_7": "healthcare_provider_primary_taxonomy_switch_7",
+        "Healthcare Provider Taxonomy Code_8": "healthcare_provider_taxonomy_code_8",
+        "Healthcare Provider Primary Taxonomy Switch_8": "healthcare_provider_primary_taxonomy_switch_8",
+        "Healthcare Provider Taxonomy Code_9": "healthcare_provider_taxonomy_code_9",
+        "Healthcare Provider Primary Taxonomy Switch_9": "healthcare_provider_primary_taxonomy_switch_9",
+        "Healthcare Provider Taxonomy Code_10": "healthcare_provider_taxonomy_code_10",
+        "Healthcare Provider Primary Taxonomy Switch_10": "healthcare_provider_primary_taxonomy_switch_10",
+        "Healthcare Provider Taxonomy Code_11": "healthcare_provider_taxonomy_code_11",
+        "Healthcare Provider Primary Taxonomy Switch_11": "healthcare_provider_primary_taxonomy_switch_11",
+        "Healthcare Provider Taxonomy Code_12": "healthcare_provider_taxonomy_code_12",
+        "Healthcare Provider Primary Taxonomy Switch_12": "healthcare_provider_primary_taxonomy_switch_12",
+        "Healthcare Provider Taxonomy Code_13": "healthcare_provider_taxonomy_code_13",
+        "Healthcare Provider Primary Taxonomy Switch_13": "healthcare_provider_primary_taxonomy_switch_13",
+        "Healthcare Provider Taxonomy Code_14": "healthcare_provider_taxonomy_code_14",
+        "Healthcare Provider Primary Taxonomy Switch_14": "healthcare_provider_primary_taxonomy_switch_14",
+        "Healthcare Provider Taxonomy Code_15": "healthcare_provider_taxonomy_code_15",
+        "Healthcare Provider Primary Taxonomy Switch_15": "healthcare_provider_primary_taxonomy_switch_15",
+    }
+
     try:
         print(f"Starting chunked blob data extraction for file: {filename}")
         blob_service_client = get_blob_service_client()
@@ -102,8 +185,12 @@ def extract_data_from_blob(filename):
         # Reset buffer position to beginning
         file_buffer.seek(0)
 
-        print("Creating lazy CSV scan...")
-        lazy_df = polars.scan_csv(file_buffer).select(relevant_columns)
+        print("Scanning Parquet...")
+        lazy_df = (
+            polars.scan_parquet(file_buffer)
+            .select(relevant_columns)
+            .rename(column_mapping)
+        )
 
         return lazy_df
 
@@ -112,125 +199,62 @@ def extract_data_from_blob(filename):
         return None
 
 
-def load_chunked_blob_data_to_postgres(
-    lazy_df, target_table, chunk_size=100_000
-):
-    """Fast bulk loading using psycopg2 COPY instead of slow write_database"""
+def load_chunked_blob_data_to_postgres(lazy_df, target_table, chunk_size=100_000):
     try:
         print(f"Starting to load data to {target_table} in chunks of {chunk_size:,}")
-        
-        # Column mapping from CSV headers to database column names
-        column_mapping = {
-            "NPI": "npi",
-            "Entity Type Code": "entity_type_code",
-            "Provider Organization Name (Legal Business Name)": "provider_organization_name",
-            "Provider Last Name (Legal Name)": "provider_last_name",
-            "Provider First Name": "provider_first_name",
-            "Provider Middle Name": "provider_middle_name",
-            "Provider Name Prefix Text": "provider_name_prefix",
-            "Provider Name Suffix Text": "provider_name_suffix",
-            "Provider Credential Text": "provider_credential",
-            "Provider Other Organization Name": "provider_other_organization_name",
-            "Provider First Line Business Practice Location Address": "provider_location_address_1",
-            "Provider Second Line Business Practice Location Address": "provider_location_address_2",
-            "Provider Business Practice Location Address City Name": "provider_city",
-            "Provider Business Practice Location Address State Name": "provider_state",
-            "Provider Business Practice Location Address Postal Code": "provider_postal_code",
-            "Healthcare Provider Taxonomy Code_1": "healthcare_provider_taxonomy_code_1",
-            "Healthcare Provider Primary Taxonomy Switch_1": "healthcare_provider_primary_taxonomy_switch_1",
-            "Healthcare Provider Taxonomy Code_2": "healthcare_provider_taxonomy_code_2",
-            "Healthcare Provider Primary Taxonomy Switch_2": "healthcare_provider_primary_taxonomy_switch_2",
-            "Healthcare Provider Taxonomy Code_3": "healthcare_provider_taxonomy_code_3",
-            "Healthcare Provider Primary Taxonomy Switch_3": "healthcare_provider_primary_taxonomy_switch_3",
-            "Healthcare Provider Taxonomy Code_4": "healthcare_provider_taxonomy_code_4",
-            "Healthcare Provider Primary Taxonomy Switch_4": "healthcare_provider_primary_taxonomy_switch_4",
-            "Healthcare Provider Taxonomy Code_5": "healthcare_provider_taxonomy_code_5",
-            "Healthcare Provider Primary Taxonomy Switch_5": "healthcare_provider_primary_taxonomy_switch_5",
-            "Healthcare Provider Taxonomy Code_6": "healthcare_provider_taxonomy_code_6",
-            "Healthcare Provider Primary Taxonomy Switch_6": "healthcare_provider_primary_taxonomy_switch_6",
-            "Healthcare Provider Taxonomy Code_7": "healthcare_provider_taxonomy_code_7",
-            "Healthcare Provider Primary Taxonomy Switch_7": "healthcare_provider_primary_taxonomy_switch_7",
-            "Healthcare Provider Taxonomy Code_8": "healthcare_provider_taxonomy_code_8",
-            "Healthcare Provider Primary Taxonomy Switch_8": "healthcare_provider_primary_taxonomy_switch_8",
-            "Healthcare Provider Taxonomy Code_9": "healthcare_provider_taxonomy_code_9",
-            "Healthcare Provider Primary Taxonomy Switch_9": "healthcare_provider_primary_taxonomy_switch_9",
-            "Healthcare Provider Taxonomy Code_10": "healthcare_provider_taxonomy_code_10",
-            "Healthcare Provider Primary Taxonomy Switch_10": "healthcare_provider_primary_taxonomy_switch_10",
-            "Healthcare Provider Taxonomy Code_11": "healthcare_provider_taxonomy_code_11",
-            "Healthcare Provider Primary Taxonomy Switch_11": "healthcare_provider_primary_taxonomy_switch_11",
-            "Healthcare Provider Taxonomy Code_12": "healthcare_provider_taxonomy_code_12",
-            "Healthcare Provider Primary Taxonomy Switch_12": "healthcare_provider_primary_taxonomy_switch_12",
-            "Healthcare Provider Taxonomy Code_13": "healthcare_provider_taxonomy_code_13",
-            "Healthcare Provider Primary Taxonomy Switch_13": "healthcare_provider_primary_taxonomy_switch_13",
-            "Healthcare Provider Taxonomy Code_14": "healthcare_provider_taxonomy_code_14",
-            "Healthcare Provider Primary Taxonomy Switch_14": "healthcare_provider_primary_taxonomy_switch_14",
-            "Healthcare Provider Taxonomy Code_15": "healthcare_provider_taxonomy_code_15",
-            "Healthcare Provider Primary Taxonomy Switch_15": "healthcare_provider_primary_taxonomy_switch_15",
-        }
-        
-        # Get direct psycopg2 connection for COPY
+
         pg_conn = get_psycopg2_connection()
-        
         chunk_count = 0
         total_rows_processed = 0
-        
-        # Process in streaming chunks without counting total rows first
+
         while True:
             chunk_count += 1
-            
-            # Get chunk using streaming approach
             batch_df = lazy_df.slice(total_rows_processed, chunk_size).collect()
-            
             if batch_df.is_empty():
                 print("No more data to process")
                 break
-                
             current_chunk_size = len(batch_df)
-            print(f"Processing chunk {chunk_count} ({current_chunk_size:,} rows)")
-            
-            # Rename columns to match database schema
-            batch_df = batch_df.rename(column_mapping)
-            
+
             # Convert to CSV in memory for COPY
             output = StringIO()
-            batch_df.write_csv(output, separator='\t', include_header=False)
+            batch_df.write_csv(output, separator="\t", include_header=False)
             output.seek(0)
-            
+
             # Use COPY for blazing fast bulk insert
             with pg_conn.cursor() as cursor:
                 try:
                     if chunk_count == 1:
                         # Truncate table on first chunk if needed
                         cursor.execute(f"TRUNCATE TABLE {target_table}")
-                    
-                    # Bulk copy data with correct column names
+
                     cursor.copy_from(
-                        output, 
+                        output,
                         target_table,
-                        columns=list(batch_df.columns),  # Use renamed columns
-                        sep='\t',
-                        null=''  # Treat empty strings as NULL
+                        columns=list(batch_df.columns),
+                        sep="\t",
                     )
                     pg_conn.commit()
-                    
                     total_rows_processed += current_chunk_size
-                    print(f"[SUCCESS] Successfully loaded chunk {chunk_count} ({current_chunk_size:,} rows)")
-                    
+                    print(
+                        f"[SUCCESS] Successfully loaded chunk {chunk_count} ({current_chunk_size:,} rows)"
+                    )
+
                 except Exception as e:
                     pg_conn.rollback()
                     print(f"Error loading chunk {chunk_count}: {e}")
                     raise
-            
-            # Break if we got less than chunk_size (last chunk)
+
             if current_chunk_size < chunk_size:
                 break
-        
+
         pg_conn.close()
-        print(f"COMPLETE: Successfully loaded all {total_rows_processed:,} rows to {target_table}")
-        
+        print(
+            f"COMPLETE: Successfully loaded all {total_rows_processed:,} rows to {target_table}"
+        )
+
     except Exception as e:
         print(f"Failed to write DataFrame to Postgres: {e}")
-        if 'pg_conn' in locals():
+        if "pg_conn" in locals():
             pg_conn.close()
         raise
 
@@ -239,22 +263,29 @@ def load_chunked_blob_data_to_postgres(
 def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
     start_time = time.time()  # Tick
     try:
-        # Transformation Logic & Stored Procs from Main DB Table Here
         body = req.get_json()
-        target_file = body.get("target_file")
 
-        lazy_df = extract_data_from_blob(target_file)
-        if lazy_df is not None:
+        # First & Large Data Target
+        parquet_target_file = body.get("parquet_target_file")
+        nppes_providers_table = "nppes_providers"
+        lazy_df_1 = extract_parquet_data_from_blob(parquet_target_file)
+        if lazy_df_1 is not None:
             load_chunked_blob_data_to_postgres(
-                lazy_df,
-                target_table="nppes_providers",
-                chunk_size=50_000,  # Now matches the function signature
+                lazy_df_1, target_table=nppes_providers_table, chunk_size=100_000
             )
 
-        # Data processing goes here
-        # 1. Read data from Azure Blob Storage
-        # 2. Process/clean the data
-        # 3. Insert into PostgreSQL using cursor.execute()
+        # Additional Data Target
+        csv_target_file_1 = ""
+        nucc_taxonomy_table = "nucc_taxonomy"
+        taxonomy_relevant_columns = []
+        taxonomy_column_mapping = []
+        lazy_df_2 = extract_csv_data_from_blob(
+            csv_target_file_1, taxonomy_relevant_columns, taxonomy_column_mapping
+        )
+        if lazy_df_2 is not None:
+            load_chunked_blob_data_to_postgres(
+                lazy_df_2, target_table=nucc_taxonomy_table, chunk_size=100_000
+            )
 
         elapsed = time.time() - start_time  # Tock
         response = f"Elapsed time: {elapsed:.2f} seconds"
