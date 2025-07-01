@@ -86,16 +86,16 @@ def load_api_data(data):
                     clean_output, target_table, columns=db_columns, sep="\t", null=""
                 )
                 pg_conn.commit()
-                print(f"✅ Loaded {len(cleaned_lines)} clean rows into {target_table}")
+                print(f" Loaded {len(cleaned_lines)} clean rows into {target_table}")
             except Exception as e:
                 pg_conn.rollback()
-                print(f"❌ COPY error: {e}")
+                print(f" COPY error: {e}")
                 raise
 
         pg_conn.close()
 
     except Exception as e:
-        print(f"❌ Failed to load API data: {e}")
+        print(f" Failed to load API data: {e}")
         if "pg_conn" in locals():
             pg_conn.close()
         raise
@@ -473,3 +473,4 @@ def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(error_message, status_code=500)
 
 
+  
