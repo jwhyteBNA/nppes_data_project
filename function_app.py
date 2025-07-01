@@ -279,7 +279,7 @@ def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
         # Additional Data Target 1
         csv_target_file_1 = body.get("csv_target_file_1")
         zip_county_table = "zip_county"
-        taxonomy_relevant_columns = [
+        zip_county_relevant_columns = [
             "ZIP",
             "COUNTY",
             "USPS_ZIP_PREF_CITY",
@@ -289,7 +289,7 @@ def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
             "OTH_RATIO",
             "TOT_RATIO",
         ]
-        taxonomy_column_mapping = {
+        zip_county_column_mapping = {
             "ZIP": "zip",
             "COUNTY": "county",
             "USPS_ZIP_PREF_CITY": "usps_zip_pref_city",
@@ -300,7 +300,7 @@ def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
             "TOT_RATIO": "tot_ratio",
         }
         lazy_df_2 = extract_csv_data_from_blob(
-            csv_target_file_1, taxonomy_relevant_columns, taxonomy_column_mapping
+            csv_target_file_1, zip_county_relevant_columns, zip_county_column_mapping
         )
         if lazy_df_2 is not None:
             load_chunked_blob_data_to_postgres(
@@ -310,8 +310,8 @@ def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
         # Additional Data Target 2
         csv_target_file_2 = body.get("csv_target_file_2")
         ssa_fips_state_county_table = "ssa_fips_state_county"
-        taxonomy_relevant_columns = []
-        taxonomy_column_mapping = {}
+        ssa_relevant_columns = []
+        ssa_column_mapping = {}
         ssa_schema_overrides = {
             "ssa_code": polars.Utf8,
             "fipscounty": polars.Utf8,
@@ -320,13 +320,46 @@ def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
 
         lazy_df_3 = extract_csv_data_from_blob(
             csv_target_file_2,
-            taxonomy_relevant_columns,
-            taxonomy_column_mapping,
+            ssa_relevant_columns,
+            ssa_column_mapping,
             ssa_schema_overrides,
         )
         if lazy_df_3 is not None:
             load_chunked_blob_data_to_postgres(
                 lazy_df_3, target_table=ssa_fips_state_county_table, chunk_size=100_000
+            )
+
+        # Additional Data Target 3
+        csv_target_file_3 = body.get("csv_target_file_3")
+        nucc_taxonomy_table = "nucc_taxonomy"
+        taxonomy_relevant_columns = [
+            "Code",
+            "Grouping",
+            "Classification",
+            "Specialization",
+        ]
+        taxonomy_column_mapping = {
+            "Code": "code",
+            "Grouping": "grouping",
+            "Classification": "classification",
+            "Specialization": "specialization",
+        }
+        taxonomy_schema_overrides = {
+            "Code": polars.Utf8,
+            "Grouping": polars.Utf8,
+            "Classification": polars.Utf8,
+            "Specialization": polars.Utf8,
+        }
+
+        lazy_df_4 = extract_csv_data_from_blob(
+            csv_target_file_3,
+            taxonomy_relevant_columns,
+            taxonomy_column_mapping,
+            taxonomy_schema_overrides,
+        )
+        if lazy_df_4 is not None:
+            load_chunked_blob_data_to_postgres(
+                lazy_df_4, target_table=nucc_taxonomy_table, chunk_size=100_000
             )
 
         elapsed = time.time() - start_time  # Tock
