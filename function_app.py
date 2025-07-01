@@ -6,8 +6,21 @@ import polars
 import io
 import psycopg2
 from io import StringIO
+import requests
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+API_URL = f"{os.getenv('API_URL')}"
+
+
+def fetch_api_data():
+    headers = {"Content-Type": "application/json"}
+    response = requests.get(API_URL, headers=headers)
+    response.raise_for_status()
+    return response.json()
+
+
+def load_api_data(data):
+    pass
 
 
 def get_blob_service_client():
@@ -265,6 +278,9 @@ def load_chunked_blob_data_to_postgres(lazy_df, target_table, chunk_size=100_000
 def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
     start_time = time.time()  # Tick
     try:
+        api_data = fetch_api_data()
+        load_api_data(api_data)
+
         body = req.get_json()
 
         # First & Large Data Target
