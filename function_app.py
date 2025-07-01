@@ -456,9 +456,20 @@ def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
                 lazy_df_4, target_table=nucc_taxonomy_table, chunk_size=100_000
             )
 
+        # Run data cleaning and transformation after all raw data is loaded
+        print("Running data cleaning and transformation...")
+        pg_conn = get_psycopg2_connection()
+        with pg_conn.cursor() as cursor:
+            cursor.execute("CALL clean_and_populate_nppes_data();")
+            pg_conn.commit()
+        pg_conn.close()
+        print("Data cleaning and transformation completed")
+
         elapsed = time.time() - start_time  # Tock
         response = f"Elapsed time: {elapsed:.2f} seconds"
         return func.HttpResponse(response, status_code=200)
     except Exception as e:
         error_message = f"Internal server error: {str(e)}"
         return func.HttpResponse(error_message, status_code=500)
+
+
