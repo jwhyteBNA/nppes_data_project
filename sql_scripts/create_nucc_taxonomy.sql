@@ -1,0 +1,8 @@
+CREATE TABLE IF NOT EXISTS nucc_taxonomy (
+    code VARCHAR(10) PRIMARY KEY,
+    grouping VARCHAR(100) NOT NULL,
+    classification VARCHAR(100) NOT NULL,
+    specialization VARCHAR(100),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
