@@ -332,18 +332,34 @@ def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
         # Additional Data Target 3
         csv_target_file_3 = body.get("csv_target_file_3")
         nucc_taxonomy_table = "nucc_taxonomy"
-        taxonomy_relevant_columns = []
-        taxonomy_column_mapping = {}
+        taxonomy_relevant_columns = [
+            "Code",
+            "Grouping",
+            "Classification",
+            "Specialization",
+        ]
+        taxonomy_column_mapping = {
+            "Code": "code",
+            "Grouping": "grouping",
+            "Classification": "classification",
+            "Specialization": "specialization",
+        }
+        taxonomy_schema_overrides = {
+            "Code": polars.Utf8,
+            "Grouping": polars.Utf8,
+            "Classification": polars.Utf8,
+            "Specialization": polars.Utf8,
+        }
 
-        lazy_df_3 = extract_csv_data_from_blob(
+        lazy_df_4 = extract_csv_data_from_blob(
             csv_target_file_3,
             taxonomy_relevant_columns,
             taxonomy_column_mapping,
-            ssa_schema_overrides,
+            taxonomy_schema_overrides,
         )
-        if lazy_df_3 is not None:
+        if lazy_df_4 is not None:
             load_chunked_blob_data_to_postgres(
-                lazy_df_3, target_table=nucc_taxonomy_table, chunk_size=100_000
+                lazy_df_4, target_table=nucc_taxonomy_table, chunk_size=100_000
             )
 
         elapsed = time.time() - start_time  # Tock
