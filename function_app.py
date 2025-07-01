@@ -20,7 +20,54 @@ def fetch_api_data():
 
 
 def load_api_data(data):
-    pass
+    headers = data[0]
+    rows = data[1:]
+    try:
+        df = polars.DataFrame(dict(zip(headers, zip(*rows))))
+        # Map API columns to database schema
+        column_mapping = {
+            "NAME": "name",
+            "B01001_001E": "population",
+            "state": "state_fips",
+            "county": "county_fips",
+        }
+        df = df.rename(column_mapping)
+
+        # Select only the columns that exist in the database schema
+        # Exclude id, created_at, updated_at as they're auto-generated
+        db_columns = ["name", "population", "state_fips", "county_fips"]
+        df = df.select([col for col in db_columns if col in df.columns])
+
+        # FIXME: Insert Null Values Handling Here
+        df = df.fill_nan(None)
+        df = df.fill_null(None)
+
+        output = StringIO()
+        df.write_csv(output, separator="\t", include_header=False)
+        output.seek(0)
+
+        target_table = "census_county_population"
+        pg_conn = get_psycopg2_connection()
+
+        with pg_conn.cursor() as cursor:
+            try:
+                cursor.copy_from(
+                    output, target_table, columns=list(df.columns), sep="\t", null=""
+                )
+                pg_conn.commit()
+                print(f"Successfully loaded {len(rows)} rows into {target_table}")
+
+            except Exception as e:
+                pg_conn.rollback()
+                print(f"Error loading API data: {e}")
+                raise
+
+        pg_conn.close()
+    except Exception as e:
+        print(f"Failed to load API data: {e}")
+        if "pg_conn" in locals():
+            pg_conn.close()
+        raise
 
 
 def get_blob_service_client():
