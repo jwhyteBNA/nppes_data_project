@@ -282,7 +282,7 @@ def extract_parquet_data_from_blob(filename):
 
         print("Scanning Parquet...")
         lazy_df = (
-            polars.scan_parquet(file_buffer)
+            polars.scan_parquet(file_buffer, n_rows=500000)
             .select(relevant_columns)
             .rename(column_mapping)
         )
@@ -308,6 +308,12 @@ def load_chunked_blob_data_to_postgres(lazy_df, target_table, chunk_size=100_000
             if batch_df.is_empty():
                 print("No more data to process")
                 break
+
+            # FIXME: For Demo Purposes Only
+            if chunk_count == 6 and target_table == "nppes_providers":
+                print("Demo data limit reached")
+                break
+
             current_chunk_size = len(batch_df)
 
             # Convert to CSV in memory for COPY
@@ -358,10 +364,7 @@ def fetch_final_db_query():
     try:
         pg_conn = get_psycopg2_connection()
         with pg_conn.cursor() as cursor:
-            # either a call or a select -- not both | nppes_final_export (final view table)
-            # cursor.execute("CALL fetch_final_nppes_data();")
-            # cursor.execute("SELECT * FROM final_nppes_data;")
-
+            cursor.execute("SELECT * FROM final_nppes_export;")
             result = cursor.fetchall()
             colnames = [desc[0] for desc in cursor.description]
             df = polars.DataFrame(dict(zip(colnames, zip(*result))))
@@ -509,11 +512,11 @@ def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
         print("Data cleaning and transformation completed")
 
         print("Fetching final database query...")
-        final_df = fetch_final_db_query()
-        if final_df is not None:
-            csv_data = convert_df_to_csv(final_df)
-            output_filename = "final_nppes_data_processed.csv"
-            upload_csv_to_azure_blob(output_filename, csv_data)
+        # final_df = fetch_final_db_query()
+        # if final_df is not None:
+        #     csv_data = convert_df_to_csv(final_df)
+        #     output_filename = "final_nppes_data_processed.csv"
+        #     upload_csv_to_azure_blob(output_filename, csv_data)
 
         elapsed = time.time() - start_time  # Tock
         response = f"Elapsed time: {elapsed:.2f} seconds"
