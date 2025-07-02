@@ -11,3 +11,4 @@ polars
 pandas
 pyarrow
 requests
+pytest
