@@ -355,9 +355,22 @@ def load_chunked_blob_data_to_postgres(lazy_df, target_table, chunk_size=100_000
 
 
 def fetch_final_db_query():
-    # logic to execute a stored proc that would draw all info from final table
-    # must return this as a dataframe using polars
-    pass
+    try:
+        pg_conn = get_psycopg2_connection()
+        with pg_conn.cursor() as cursor:
+            # either a call or a select -- not both
+            # cursor.execute("CALL fetch_final_nppes_data();")
+            # cursor.execute("SELECT * FROM final_nppes_data;")
+
+            result = cursor.fetchall()
+            colnames = [desc[0] for desc in cursor.description]
+            df = polars.DataFrame(dict(zip(colnames, zip(*result))))
+        pg_conn.close()
+        return df
+    except Exception as e:
+        print(f"Error fetching final DB query: {e}")
+        pg_conn.close()
+        return None
 
 
 def convert_df_to_csv(df):
