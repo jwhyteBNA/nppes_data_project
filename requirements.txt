@@ -12,3 +12,4 @@ pandas
 pyarrow
 requests
 pytest
+pytest-mock
