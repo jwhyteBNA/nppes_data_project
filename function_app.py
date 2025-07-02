@@ -364,7 +364,7 @@ def fetch_final_db_query():
     try:
         pg_conn = get_psycopg2_connection()
         with pg_conn.cursor() as cursor:
-            cursor.execute("SELECT * FROM final_nppes_export;")
+            cursor.execute("SELECT * FROM nppes_final_export;")
             result = cursor.fetchall()
             colnames = [desc[0] for desc in cursor.description]
             df = polars.DataFrame(dict(zip(colnames, zip(*result))))
@@ -512,11 +512,11 @@ def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
         print("Data cleaning and transformation completed")
 
         print("Fetching final database query...")
-        # final_df = fetch_final_db_query()
-        # if final_df is not None:
-        #     csv_data = convert_df_to_csv(final_df)
-        #     output_filename = "final_nppes_data_processed.csv"
-        #     upload_csv_to_azure_blob(output_filename, csv_data)
+        final_df = fetch_final_db_query()
+        if final_df is not None:
+            csv_data = convert_df_to_csv(final_df)
+            output_filename = "final_nppes_data_processed.csv"
+            upload_csv_to_azure_blob(output_filename, csv_data)
 
         elapsed = time.time() - start_time  # Tock
         response = f"Elapsed time: {elapsed:.2f} seconds"
