@@ -323,10 +323,10 @@ def load_chunked_blob_data_to_postgres(lazy_df, target_table, chunk_size=100_000
                 print("No more data to process")
                 break
 
-            # FIXME: For Demo Purposes Only
-            if chunk_count == 6 and target_table == "nppes_providers":
-                print("Demo data limit reached")
-                break
+            # # FIXME: For Demo Purposes Only
+            # if chunk_count == 6 and target_table == "nppes_providers":
+            #     print("Demo data limit reached")
+            #     break
 
             current_chunk_size = len(batch_df)
 
@@ -409,12 +409,20 @@ def upload_csv_to_azure_blob(filename, data):
         blob_client = blob_service_client.get_blob_client(
             container=CONTAINER_NAME, blob=filename
         )
-        blob_client.upload_blob(data.encode("utf-8"), overwrite=True)
-        print("Successful upload")
+        
+        # Handle encoding more robustly
+        if isinstance(data, str):
+            # Use errors='replace' to handle problematic characters
+            blob_data = data.encode("utf-8", errors="replace")
+        else:
+            blob_data = data
+            
+        blob_client.upload_blob(blob_data, overwrite=True)
+        print(f"Successfully uploaded {filename} to Azure Blob Storage")
         return None
     except Exception as e:
-        print(f"An error occurred: {e}")
-        return None
+        print(f"Upload error for {filename}: {e}")
+        return str(e)
 
 
 @app.route(route="NPPES_Data_Cleaning")
@@ -530,16 +538,144 @@ def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
         pg_conn.close()
         print("Data cleaning and transformation completed")
 
-        print("Fetching final database query...")
-        final_df = fetch_final_db_query()
-        if final_df is not None:
-            csv_data = convert_df_to_csv(final_df)
-            output_filename = "final_nppes_data_processed.csv"
-            upload_csv_to_azure_blob(output_filename, csv_data)
+        # Optional: Export clean data to CSV (can be controlled via request parameter)
+        export_csv = body.get("export_csv", True)  # Default to True
+        if export_csv:
+            print("Starting CSV export of clean data...")
+            csv_filename = body.get("csv_filename", "nppes_clean_export.csv")
+            csv_chunk_size = body.get("csv_chunk_size", 50000)
+            
+            export_success = export_clean_data_to_csv_chunked(csv_chunk_size, csv_filename)
+            if export_success:
+                print(f"CSV export completed: {csv_filename}")
+            else:
+                print("CSV export failed, but continuing...")
 
         elapsed = time.time() - start_time  # Tock
-        response = f"Elapsed time: {elapsed:.2f} seconds"
+        response = f"Data processing completed in {elapsed:.2f} seconds"
         return func.HttpResponse(response, status_code=200)
     except Exception as e:
         error_message = f"Internal server error: {str(e)}"
+        return func.HttpResponse(error_message, status_code=500)
+
+
+def export_clean_data_to_csv_chunked(chunk_size=50000, output_filename="nppes_clean_export.csv"):
+    """
+    Export clean NPPES data to CSV using chunked processing to handle large datasets efficiently.
+    """
+    try:
+        print(f"Starting chunked CSV export with chunk size: {chunk_size:,}")
+        
+        # Get total count first
+        pg_conn = get_psycopg2_connection()
+        with pg_conn.cursor() as cursor:
+            cursor.execute("SELECT COUNT(*) FROM nppes_providers_clean;")
+            total_count = cursor.fetchone()[0]
+            print(f"Total records to export: {total_count:,}")
+        
+        if total_count == 0:
+            print("No data to export")
+            return False
+        
+        # Initialize CSV content with headers
+        csv_content = []
+        headers_written = False
+        processed_count = 0
+        
+        # Process data in chunks
+        while processed_count < total_count:
+            print(f"Processing chunk: {processed_count:,} to {min(processed_count + chunk_size, total_count):,}")
+            
+            with pg_conn.cursor() as cursor:
+                # Use server-side cursor for memory efficiency
+                cursor.execute(f"""
+                    SELECT 
+                        npi, entity_type, entity_name,
+                        provider_location_address_1, provider_location_address_2,
+                        provider_city, provider_state, provider_postal_code_clean, county_name, state_name,
+                        primary_taxonomy_code, taxonomy_grouping, taxonomy_classification, taxonomy_specialization,
+                        data_quality_score
+                    FROM nppes_providers_clean 
+                    ORDER BY npi
+                    LIMIT {chunk_size} OFFSET {processed_count};
+                """)
+                
+                rows = cursor.fetchall()
+                if not rows:
+                    break
+                
+                # Get column names for header
+                if not headers_written:
+                    column_names = [desc[0] for desc in cursor.description]
+                    csv_content.append(','.join(f'"{col}"' for col in column_names))
+                    headers_written = True
+                
+                # Convert rows to CSV format
+                for row in rows:
+                    # Handle None values and escape quotes
+                    escaped_row = []
+                    for value in row:
+                        if value is None:
+                            escaped_row.append('""')
+                        else:
+                            # Convert to string and escape quotes
+                            str_value = str(value).replace('"', '""')
+                            escaped_row.append(f'"{str_value}"')
+                    csv_content.append(','.join(escaped_row))
+                
+                processed_count += len(rows)
+                print(f"Processed {processed_count:,} / {total_count:,} records")
+        
+        pg_conn.close()
+        
+        # Join all CSV content
+        final_csv = '\n'.join(csv_content)
+        
+        # Upload to Azure Blob
+        print(f"Uploading CSV file: {output_filename}")
+        upload_success = upload_csv_to_azure_blob(output_filename, final_csv)
+        
+        if upload_success is None:  # Your upload function returns None on success
+            print(f"Successfully exported {processed_count:,} records to {output_filename}")
+            return True
+        else:
+            print("Upload failed")
+            return False
+            
+    except Exception as e:
+        print(f"Error during chunked CSV export: {e}")
+        if 'pg_conn' in locals():
+            pg_conn.close()
+        return False
+
+
+@app.route(route="export_clean_csv")
+def export_clean_csv(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Azure Function endpoint to export clean NPPES data to CSV
+    """
+    start_time = time.time()
+    
+    try:
+        # Get optional parameters from request
+        body = req.get_json() if req.get_body() else {}
+        chunk_size = body.get('chunk_size', 50000)
+        output_filename = body.get('output_filename', 'nppes_clean_export.csv')
+        
+        print(f"Starting CSV export with chunk_size={chunk_size}, filename={output_filename}")
+        
+        # Run the export
+        success = export_clean_data_to_csv_chunked(chunk_size, output_filename)
+        
+        elapsed = time.time() - start_time
+        
+        if success:
+            response_message = f"CSV export completed successfully in {elapsed:.2f} seconds. File: {output_filename}"
+            return func.HttpResponse(response_message, status_code=200)
+        else:
+            return func.HttpResponse("CSV export failed. Check logs for details.", status_code=500)
+            
+    except Exception as e:
+        elapsed = time.time() - start_time
+        error_message = f"CSV export error after {elapsed:.2f} seconds: {str(e)}"
         return func.HttpResponse(error_message, status_code=500)
