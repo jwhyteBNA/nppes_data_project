@@ -296,7 +296,7 @@ def extract_parquet_data_from_blob(filename):
 
         print("Scanning Parquet...")
         lazy_df = (
-            polars.scan_parquet(file_buffer, n_rows=500000)
+            polars.scan_parquet(file_buffer)
             .select(relevant_columns)
             .rename(column_mapping)
         )
