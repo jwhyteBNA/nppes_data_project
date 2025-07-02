@@ -126,7 +126,6 @@ def get_blob_service_client():
 
 
 def get_psycopg2_connection():
-    """Get direct psycopg2 connection for fast COPY operations"""
     try:
         connection_string = (
             f"host={os.environ.get('POSTGRES_HOST')} "
