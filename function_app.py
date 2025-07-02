@@ -7,9 +7,24 @@ import io
 import psycopg2
 from io import StringIO
 import requests
+from sqlalchemy import create_engine, MetaData, Table
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 API_URL = f"{os.getenv('API_URL')}"
+
+
+def get_sqlalchemy_engine():
+    try:
+        db_user = os.environ.get("POSTGRES_USER")
+        db_password = os.environ.get("POSTGRES_PASSWORD")
+        db_host = os.environ.get("POSTGRES_HOST")
+        db_port = os.environ.get("POSTGRES_PORT")
+        db_name = os.environ.get("POSTGRES_DB")
+        db_url = f"postgresql+psycopg2://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+        engine = create_engine(db_url)
+        return engine
+    except Exception as e:
+        raise RuntimeError(f"Failed to create SQLAlchemy engine: {e}")
 
 
 def fetch_api_data():
@@ -39,29 +54,30 @@ def load_api_data(data):
         df = df.select(db_columns)
 
         # Convert population to integer safely
-        df = df.with_columns([
-            df["population"].cast(polars.Int32, strict=False)
-        ])
+        df = df.with_columns([df["population"].cast(polars.Int32, strict=False)])
 
         # Drop rows with any missing required values
         df = df.filter(
-            df["population"].is_not_null() &
-            df["name"].is_not_null() &
-            df["state_fips"].is_not_null() &
-            df["county_fips"].is_not_null()
+            df["population"].is_not_null()
+            & df["name"].is_not_null()
+            & df["state_fips"].is_not_null()
+            & df["county_fips"].is_not_null()
         )
 
         # Cast to strings, strip spaces, fill nulls with ""
-        df = df.with_columns([
-            df[col].cast(str).fill_null("").str.strip_chars().alias(col) for col in db_columns
-        ])
+        df = df.with_columns(
+            [
+                df[col].cast(str).fill_null("").str.strip_chars().alias(col)
+                for col in db_columns
+            ]
+        )
 
         # Filter out rows where all fields are empty (just in case)
         df = df.filter(
-            (df["name"].str.len_chars() > 0) |
-            (df["population"].str.len_chars() > 0) |
-            (df["state_fips"].str.len_chars() > 0) |
-            (df["county_fips"].str.len_chars() > 0)
+            (df["name"].str.len_chars() > 0)
+            | (df["population"].str.len_chars() > 0)
+            | (df["state_fips"].str.len_chars() > 0)
+            | (df["county_fips"].str.len_chars() > 0)
         )
 
         # Step 1: Write cleaned CSV to StringIO
@@ -71,7 +87,8 @@ def load_api_data(data):
 
         # Step 2: Strip blank lines
         cleaned_lines = [
-            line for line in output.getvalue().splitlines()
+            line
+            for line in output.getvalue().splitlines()
             if line.strip() and len(line.split("\t")) == 4
         ]
         clean_output = StringIO("\n".join(cleaned_lines) + "\n")
@@ -280,7 +297,7 @@ def extract_parquet_data_from_blob(filename):
 
         print("Scanning Parquet...")
         lazy_df = (
-            polars.scan_parquet(file_buffer)
+            polars.scan_parquet(file_buffer, n_rows=500000)
             .select(relevant_columns)
             .rename(column_mapping)
         )
@@ -306,6 +323,12 @@ def load_chunked_blob_data_to_postgres(lazy_df, target_table, chunk_size=100_000
             if batch_df.is_empty():
                 print("No more data to process")
                 break
+
+            # FIXME: For Demo Purposes Only
+            if chunk_count == 6 and target_table == "nppes_providers":
+                print("Demo data limit reached")
+                break
+
             current_chunk_size = len(batch_df)
 
             # Convert to CSV in memory for COPY
@@ -350,6 +373,49 @@ def load_chunked_blob_data_to_postgres(lazy_df, target_table, chunk_size=100_000
         if "pg_conn" in locals():
             pg_conn.close()
         raise
+
+
+def fetch_final_db_query():
+    try:
+        engine = get_sqlalchemy_engine()
+        metadata = MetaData()
+        nppes_view = Table("nppes_final_export", metadata, autoload_with=engine)
+
+        with engine.connect() as conn:
+            result = conn.execute(nppes_view.select())
+            rows = result.fetchall()
+            colnames = result.keys()
+            if not rows:
+                return None
+            df = polars.DataFrame(
+                {col: [row[idx] for row in rows] for idx, col in enumerate(colnames)}
+            )
+        return df
+    except Exception as e:
+        print(f"Error fetching final DB query with SQLAlchemy: {e}")
+        return None
+
+
+def convert_df_to_csv(df):
+    output = StringIO()
+    df.write_csv(output)
+    output.seek(0)
+    return output.getvalue()
+
+
+def upload_csv_to_azure_blob(filename, data):
+    CONTAINER_NAME = "nppes"
+    try:
+        blob_service_client = get_blob_service_client()
+        blob_client = blob_service_client.get_blob_client(
+            container=CONTAINER_NAME, blob=filename
+        )
+        blob_client.upload_blob(data.encode("utf-8"), overwrite=True)
+        print("Successful upload")
+        return None
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
 
 
 @app.route(route="NPPES_Data_Cleaning")
@@ -465,12 +531,16 @@ def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
         pg_conn.close()
         print("Data cleaning and transformation completed")
 
+        print("Fetching final database query...")
+        final_df = fetch_final_db_query()
+        if final_df is not None:
+            csv_data = convert_df_to_csv(final_df)
+            output_filename = "final_nppes_data_processed.csv"
+            upload_csv_to_azure_blob(output_filename, csv_data)
+
         elapsed = time.time() - start_time  # Tock
         response = f"Elapsed time: {elapsed:.2f} seconds"
         return func.HttpResponse(response, status_code=200)
     except Exception as e:
         error_message = f"Internal server error: {str(e)}"
         return func.HttpResponse(error_message, status_code=500)
-
-
-  
