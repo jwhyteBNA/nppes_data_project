@@ -1,101 +1,4 @@
 -- =====================================================
--- Enhanced Data Cleaning Stored Procedure for NPPES
--- =====================================================
-
--- Create the cleaned NPPES providers table with proper constraints
-CREATE TABLE IF NOT EXISTS nppes_providers_clean (
-    npi VARCHAR(10) PRIMARY KEY,
-    entity_type_code INTEGER NOT NULL CHECK (entity_type_code IN (1, 2)),
-    entity_type VARCHAR(20) NOT NULL,
-    entity_name VARCHAR(200),
-    provider_organization_name VARCHAR(200),
-    provider_last_name VARCHAR(100),
-    provider_first_name VARCHAR(100),
-    provider_middle_name VARCHAR(100),
-    provider_name_prefix VARCHAR(10),
-    provider_name_suffix VARCHAR(10),
-    provider_credential VARCHAR(50),
-    provider_other_organization_name VARCHAR(200),
-    
-    -- Address fields
-    provider_location_address_1 VARCHAR(100),
-    provider_location_address_2 VARCHAR(100),
-    provider_city VARCHAR(100),
-    provider_state VARCHAR(50),
-    provider_postal_code VARCHAR(10),
-    provider_postal_code_clean VARCHAR(5), -- 5-digit ZIP
-    
-    -- Primary taxonomy (most relevant for analytics)
-    primary_taxonomy_code VARCHAR(20),
-    primary_taxonomy_switch VARCHAR(1),
-    
-    -- Enriched taxonomy data
-    taxonomy_grouping VARCHAR(100),
-    taxonomy_classification VARCHAR(100),
-    taxonomy_specialization VARCHAR(100),
-    
-    -- Data quality flags
-    has_complete_address BOOLEAN DEFAULT FALSE,
-    has_valid_zip BOOLEAN DEFAULT FALSE,
-    has_primary_taxonomy BOOLEAN DEFAULT FALSE,
-    
-    -- Metadata
-    data_quality_score INTEGER DEFAULT 0, -- 0-100 score
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Create performance indexes
-CREATE INDEX IF NOT EXISTS idx_nppes_clean_state_city ON nppes_providers_clean (provider_state, provider_city);
-CREATE INDEX IF NOT EXISTS idx_nppes_clean_entity_type ON nppes_providers_clean (entity_type_code);
-CREATE INDEX IF NOT EXISTS idx_nppes_clean_taxonomy ON nppes_providers_clean (primary_taxonomy_code);
-CREATE INDEX IF NOT EXISTS idx_nppes_clean_zip ON nppes_providers_clean (provider_postal_code_clean);
-CREATE INDEX IF NOT EXISTS idx_nppes_clean_quality ON nppes_providers_clean (data_quality_score);
-
--- =====================================================
--- Helper Function: Extract Primary Taxonomy (Optimized)
--- =====================================================
-CREATE OR REPLACE FUNCTION get_primary_taxonomy_code(
-    code_1 VARCHAR, switch_1 VARCHAR,
-    code_2 VARCHAR, switch_2 VARCHAR,
-    code_3 VARCHAR, switch_3 VARCHAR,
-    code_4 VARCHAR, switch_4 VARCHAR,
-    code_5 VARCHAR, switch_5 VARCHAR,
-    code_6 VARCHAR, switch_6 VARCHAR,
-    code_7 VARCHAR, switch_7 VARCHAR,
-    code_8 VARCHAR, switch_8 VARCHAR,
-    code_9 VARCHAR, switch_9 VARCHAR,
-    code_10 VARCHAR, switch_10 VARCHAR,
-    code_11 VARCHAR, switch_11 VARCHAR,
-    code_12 VARCHAR, switch_12 VARCHAR,
-    code_13 VARCHAR, switch_13 VARCHAR,
-    code_14 VARCHAR, switch_14 VARCHAR,
-    code_15 VARCHAR, switch_15 VARCHAR
-) RETURNS VARCHAR AS $$
-BEGIN
-    -- Return the first taxonomy code with 'Y' switch
-    RETURN CASE
-        WHEN switch_1 = 'Y' THEN code_1
-        WHEN switch_2 = 'Y' THEN code_2
-        WHEN switch_3 = 'Y' THEN code_3
-        WHEN switch_4 = 'Y' THEN code_4
-        WHEN switch_5 = 'Y' THEN code_5
-        WHEN switch_6 = 'Y' THEN code_6
-        WHEN switch_7 = 'Y' THEN code_7
-        WHEN switch_8 = 'Y' THEN code_8
-        WHEN switch_9 = 'Y' THEN code_9
-        WHEN switch_10 = 'Y' THEN code_10
-        WHEN switch_11 = 'Y' THEN code_11
-        WHEN switch_12 = 'Y' THEN code_12
-        WHEN switch_13 = 'Y' THEN code_13
-        WHEN switch_14 = 'Y' THEN code_14
-        WHEN switch_15 = 'Y' THEN code_15
-        ELSE COALESCE(code_1, code_2, code_3) -- Fallback to first available
-    END;
-END;
-$$ LANGUAGE plpgsql IMMUTABLE;
-
--- =====================================================
 -- Main Cleaning Stored Procedure
 -- =====================================================
 CREATE OR REPLACE PROCEDURE clean_and_populate_nppes_data()
@@ -212,17 +115,48 @@ BEGIN
         FROM cleaned_raw_data crd
         LEFT JOIN nucc_taxonomy nt ON crd.primary_taxonomy_code = nt.code
     ),
+    county_enriched_data AS (
+        -- Add county information using ZIP-county crosswalk
+        -- For ZIPs that span multiple counties, select the one with highest ratio (largest population)
+        SELECT 
+            ed.*,
+            zc.county AS county_fips,
+            sfc.countyname_fips AS county_name,
+            sfc.state_name,
+            zc.tot_ratio AS zip_county_ratio,
+            
+            -- County info quality flag
+            (zc.county IS NOT NULL AND sfc.countyname_fips IS NOT NULL) AS has_county_info,
+            
+            -- Rank counties by ratio for each ZIP (to handle multi-county ZIPs)
+            ROW_NUMBER() OVER (
+                PARTITION BY ed.npi 
+                ORDER BY zc.tot_ratio DESC NULLS LAST
+            ) AS county_rank
+            
+        FROM enriched_data ed
+        LEFT JOIN zip_county zc ON ed.provider_postal_code_clean = zc.zip
+        LEFT JOIN ssa_fips_state_county sfc ON zc.county = sfc.fipscounty
+    ),
+    final_enriched_data AS (
+        -- Select only the primary county for each provider (highest ratio)
+        SELECT 
+            ced.*
+        FROM county_enriched_data ced
+        WHERE ced.county_rank = 1
+    ),
     scored_data AS (
         SELECT 
             *,
-            -- Calculate data quality score (0-100)
+            -- Calculate data quality score (0-100) - updated for Part 3
             (
-                CASE WHEN entity_name IS NOT NULL AND entity_name != '' THEN 25 ELSE 0 END +
-                CASE WHEN has_complete_address THEN 25 ELSE 0 END +
-                CASE WHEN has_valid_zip THEN 25 ELSE 0 END +
-                CASE WHEN has_primary_taxonomy THEN 25 ELSE 0 END
+                CASE WHEN entity_name IS NOT NULL AND entity_name != '' THEN 20 ELSE 0 END +
+                CASE WHEN has_complete_address THEN 20 ELSE 0 END +
+                CASE WHEN has_valid_zip THEN 20 ELSE 0 END +
+                CASE WHEN has_primary_taxonomy THEN 20 ELSE 0 END +
+                CASE WHEN has_county_info THEN 20 ELSE 0 END -- New county criterion
             ) AS data_quality_score
-        FROM enriched_data
+        FROM final_enriched_data
     )
     
     -- Insert into clean table with UPSERT
@@ -234,7 +168,8 @@ BEGIN
         provider_location_address_1, provider_location_address_2,
         provider_city, provider_state, provider_postal_code, provider_postal_code_clean,
         primary_taxonomy_code, taxonomy_grouping, taxonomy_classification, taxonomy_specialization,
-        has_complete_address, has_valid_zip, has_primary_taxonomy,
+        county_fips, county_name, state_name, zip_county_ratio,
+        has_complete_address, has_valid_zip, has_primary_taxonomy, has_county_info,
         data_quality_score, updated_at
     )
     SELECT 
@@ -245,7 +180,8 @@ BEGIN
         provider_location_address_1, provider_location_address_2,
         provider_city, provider_state, provider_postal_code, provider_postal_code_clean,
         primary_taxonomy_code, taxonomy_grouping, taxonomy_classification, taxonomy_specialization,
-        has_complete_address, has_valid_zip, has_primary_taxonomy,
+        county_fips, county_name, state_name, zip_county_ratio,
+        has_complete_address, has_valid_zip, has_primary_taxonomy, has_county_info,
         data_quality_score, CURRENT_TIMESTAMP
     FROM scored_data
     
@@ -271,9 +207,14 @@ BEGIN
         taxonomy_grouping = EXCLUDED.taxonomy_grouping,
         taxonomy_classification = EXCLUDED.taxonomy_classification,
         taxonomy_specialization = EXCLUDED.taxonomy_specialization,
+        county_fips = EXCLUDED.county_fips,
+        county_name = EXCLUDED.county_name,
+        state_name = EXCLUDED.state_name,
+        zip_county_ratio = EXCLUDED.zip_county_ratio,
         has_complete_address = EXCLUDED.has_complete_address,
         has_valid_zip = EXCLUDED.has_valid_zip,
         has_primary_taxonomy = EXCLUDED.has_primary_taxonomy,
+        has_county_info = EXCLUDED.has_county_info,
         data_quality_score = EXCLUDED.data_quality_score,
         updated_at = CURRENT_TIMESTAMP;
     
