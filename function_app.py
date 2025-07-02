@@ -7,9 +7,24 @@ import io
 import psycopg2
 from io import StringIO
 import requests
+from sqlalchemy import create_engine, MetaData, Table
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 API_URL = f"{os.getenv('API_URL')}"
+
+
+def get_sqlalchemy_engine():
+    try:
+        db_user = os.environ.get("POSTGRES_USER")
+        db_password = os.environ.get("POSTGRES_PASSWORD")
+        db_host = os.environ.get("POSTGRES_HOST")
+        db_port = os.environ.get("POSTGRES_PORT")
+        db_name = os.environ.get("POSTGRES_DB")
+        db_url = f"postgresql+psycopg2://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+        engine = create_engine(db_url)
+        return engine
+    except Exception as e:
+        raise RuntimeError(f"Failed to create SQLAlchemy engine: {e}")
 
 
 def fetch_api_data():
@@ -362,17 +377,22 @@ def load_chunked_blob_data_to_postgres(lazy_df, target_table, chunk_size=100_000
 
 def fetch_final_db_query():
     try:
-        pg_conn = get_psycopg2_connection()
-        with pg_conn.cursor() as cursor:
-            cursor.execute("SELECT * FROM nppes_final_export;")
-            result = cursor.fetchall()
-            colnames = [desc[0] for desc in cursor.description]
-            df = polars.DataFrame(dict(zip(colnames, zip(*result))))
-        pg_conn.close()
+        engine = get_sqlalchemy_engine()
+        metadata = MetaData()
+        nppes_view = Table("nppes_final_export", metadata, autoload_with=engine)
+
+        with engine.connect() as conn:
+            result = conn.execute(nppes_view.select())
+            rows = result.fetchall()
+            colnames = result.keys()
+            if not rows:
+                return None
+            df = polars.DataFrame(
+                {col: [row[idx] for row in rows] for idx, col in enumerate(colnames)}
+            )
         return df
     except Exception as e:
-        print(f"Error fetching final DB query: {e}")
-        pg_conn.close()
+        print(f"Error fetching final DB query with SQLAlchemy: {e}")
         return None
 
 
