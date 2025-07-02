@@ -358,7 +358,7 @@ def fetch_final_db_query():
     try:
         pg_conn = get_psycopg2_connection()
         with pg_conn.cursor() as cursor:
-            # either a call or a select -- not both
+            # either a call or a select -- not both | nppes_final_export (final view table)
             # cursor.execute("CALL fetch_final_nppes_data();")
             # cursor.execute("SELECT * FROM final_nppes_data;")
 
