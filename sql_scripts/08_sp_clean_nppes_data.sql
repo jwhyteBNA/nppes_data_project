@@ -117,26 +117,31 @@ BEGIN
     ),
     county_enriched_data AS (
         -- Add county information using ZIP-county crosswalk
-        -- For ZIPs that span multiple counties, select the one with highest ratio (largest population)
+        -- For ZIPs that span multiple counties, select the one with largest population (per Note 2)
         SELECT 
             ed.*,
             zc.county AS county_fips,
             sfc.countyname_fips AS county_name,
             sfc.state_name,
             zc.tot_ratio AS zip_county_ratio,
+            ccp.population AS county_population,
             
             -- County info quality flag
             (zc.county IS NOT NULL AND sfc.countyname_fips IS NOT NULL) AS has_county_info,
             
-            -- Rank counties by ratio for each ZIP (to handle multi-county ZIPs)
+            -- Rank counties by POPULATION for each ZIP (per README Note 2: "assign the county with the larger population")
             ROW_NUMBER() OVER (
                 PARTITION BY ed.npi 
-                ORDER BY zc.tot_ratio DESC NULLS LAST
+                ORDER BY ccp.population DESC NULLS LAST, zc.tot_ratio DESC NULLS LAST
             ) AS county_rank
             
         FROM enriched_data ed
         LEFT JOIN zip_county zc ON ed.provider_postal_code_clean = zc.zip
         LEFT JOIN ssa_fips_state_county sfc ON zc.county = sfc.fipscounty
+        LEFT JOIN census_county_population ccp ON (
+            LEFT(sfc.fipscounty, 2) = ccp.state_fips AND 
+            RIGHT(sfc.fipscounty, 3) = ccp.county_fips
+        )
     ),
     final_enriched_data AS (
         -- Select only the primary county for each provider (highest ratio)
@@ -230,4 +235,3 @@ BEGIN
         
 END;
 $$;
-

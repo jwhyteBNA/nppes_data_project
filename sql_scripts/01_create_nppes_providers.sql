@@ -70,11 +70,10 @@ CREATE INDEX IF NOT EXISTS idx_nppes_state ON nppes_providers(provider_state);  
 CREATE INDEX IF NOT EXISTS idx_nppes_postal_code ON nppes_providers(provider_postal_code);    -- Geographic queries by ZIP
 CREATE INDEX IF NOT EXISTS idx_nppes_last_name ON nppes_providers(provider_last_name);        -- Search individual providers by name
 CREATE INDEX IF NOT EXISTS idx_nppes_organization ON nppes_providers(provider_organization_name); -- Search organizations by name
-CREATE INDEX IF NOT EXISTS idx_nppes_primary_taxonomy ON nppes_providers(primary_taxonomy_code);   -- Filter by specialty/classification
+
 
 -- Table and Column Documentation
 COMMENT ON TABLE nppes_providers IS 'Raw staging table for healthcare providers from NPPES data dissemination file. Contains unprocessed provider information before cleaning and transformation.';
 COMMENT ON COLUMN nppes_providers.npi IS 'National Provider Identifier - unique 10-digit number assigned to healthcare providers';
 COMMENT ON COLUMN nppes_providers.entity_type_code IS '1 = Individual Provider (doctors, nurses, etc.), 2 = Organization Provider (hospitals, clinics, etc.)';
 COMMENT ON COLUMN nppes_providers.provider_postal_code IS 'ZIP code for business practice location (not mailing address). May need standardization for county mapping.';
-COMMENT ON COLUMN nppes_providers.primary_taxonomy_code IS 'Primary healthcare provider taxonomy code (derived from taxonomy fields where primary switch = Y). Used for specialty classification.';
