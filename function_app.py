@@ -7,24 +7,9 @@ import io
 import psycopg2
 from io import StringIO
 import requests
-from sqlalchemy import create_engine, MetaData, Table
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 API_URL = f"{os.getenv('API_URL')}"
-
-
-def get_sqlalchemy_engine():
-    try:
-        db_user = os.environ.get("POSTGRES_USER")
-        db_password = os.environ.get("POSTGRES_PASSWORD")
-        db_host = os.environ.get("POSTGRES_HOST")
-        db_port = os.environ.get("POSTGRES_PORT")
-        db_name = os.environ.get("POSTGRES_DB")
-        db_url = f"postgresql+psycopg2://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
-        engine = create_engine(db_url)
-        return engine
-    except Exception as e:
-        raise RuntimeError(f"Failed to create SQLAlchemy engine: {e}")
 
 
 def fetch_api_data():
@@ -323,10 +308,10 @@ def load_chunked_blob_data_to_postgres(lazy_df, target_table, chunk_size=100_000
                 print("No more data to process")
                 break
 
-            # # FIXME: For Demo Purposes Only
-            # if chunk_count == 6 and target_table == "nppes_providers":
-            #     print("Demo data limit reached")
-            #     break
+            # FIXME: For Demo Purposes Only
+            if chunk_count == 6 and target_table == "nppes_providers":
+                print("Demo data limit reached")
+                break
 
             current_chunk_size = len(batch_df)
 
@@ -339,8 +324,8 @@ def load_chunked_blob_data_to_postgres(lazy_df, target_table, chunk_size=100_000
             with pg_conn.cursor() as cursor:
                 try:
                     if chunk_count == 1:
-                        # Truncate table on first chunk if needed
-                        cursor.execute(f"TRUNCATE TABLE {target_table}")
+                        # Truncate table on first chunk if needed using stored procedure
+                        cursor.execute("CALL truncate_table(%s)", (target_table,))
 
                     cursor.copy_from(
                         output,
@@ -372,27 +357,6 @@ def load_chunked_blob_data_to_postgres(lazy_df, target_table, chunk_size=100_000
         if "pg_conn" in locals():
             pg_conn.close()
         raise
-
-
-def fetch_final_db_query():
-    try:
-        engine = get_sqlalchemy_engine()
-        metadata = MetaData()
-        nppes_view = Table("nppes_final_export", metadata, autoload_with=engine)
-
-        with engine.connect() as conn:
-            result = conn.execute(nppes_view.select())
-            rows = result.fetchall()
-            colnames = result.keys()
-            if not rows:
-                return None
-            df = polars.DataFrame(
-                {col: [row[idx] for row in rows] for idx, col in enumerate(colnames)}
-            )
-        return df
-    except Exception as e:
-        print(f"Error fetching final DB query with SQLAlchemy: {e}")
-        return None
 
 
 def convert_df_to_csv(df):
@@ -466,8 +430,15 @@ def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
             "OTH_RATIO": "oth_ratio",
             "TOT_RATIO": "tot_ratio",
         }
+        # Add schema overrides to ensure ZIP codes are treated as strings
+        zip_county_schema_overrides = {
+            "ZIP": polars.Utf8,
+            "COUNTY": polars.Utf8,
+            "USPS_ZIP_PREF_CITY": polars.Utf8,
+            "USPS_ZIP_PREF_STATE": polars.Utf8,
+        }
         lazy_df_2 = extract_csv_data_from_blob(
-            csv_target_file_1, zip_county_relevant_columns, zip_county_column_mapping
+            csv_target_file_1, zip_county_relevant_columns, zip_county_column_mapping, zip_county_schema_overrides
         )
         if lazy_df_2 is not None:
             load_chunked_blob_data_to_postgres(
@@ -533,7 +504,9 @@ def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
         print("Running data cleaning and transformation...")
         pg_conn = get_psycopg2_connection()
         with pg_conn.cursor() as cursor:
-            cursor.execute("CALL clean_and_populate_nppes_data();")
+            # Execute stored procedures using psycopg2
+            cursor.execute("CALL clean_and_populate_nppes_data()")
+            cursor.execute("CALL create_export_view()")
             pg_conn.commit()
         pg_conn.close()
         print("Data cleaning and transformation completed")
@@ -561,78 +534,68 @@ def NPPES_Data_Cleaning(req: func.HttpRequest) -> func.HttpResponse:
 
 def export_clean_data_to_csv_chunked(chunk_size=50000, output_filename="nppes_clean_export.csv"):
     """
-    Export clean NPPES data to CSV using chunked processing to handle large datasets efficiently.
+    Export clean NPPES data to CSV - simple and efficient.
     """
     try:
-        print(f"Starting chunked CSV export with chunk size: {chunk_size:,}")
+        print(f"Starting CSV export to file: {output_filename}")
         
-        # Get total count first
         pg_conn = get_psycopg2_connection()
-        with pg_conn.cursor() as cursor:
-            cursor.execute("SELECT COUNT(*) FROM nppes_providers_clean;")
-            total_count = cursor.fetchone()[0]
-            print(f"Total records to export: {total_count:,}")
         
-        if total_count == 0:
-            print("No data to export")
-            return False
-        
-        # Initialize CSV content with headers
+        # Initialize CSV content
         csv_content = []
-        headers_written = False
         processed_count = 0
         
-        # Process data in chunks
-        while processed_count < total_count:
-            print(f"Processing chunk: {processed_count:,} to {min(processed_count + chunk_size, total_count):,}")
+        # Add headers
+        headers = [
+            'npi', 'entity_type', 'entity_name', 'provider_location_address_1', 
+            'provider_location_address_2', 'provider_city', 'provider_state', 
+            'provider_postal_code_clean', 'county_name', 'state_name',
+            'primary_taxonomy_code', 'taxonomy_grouping', 'taxonomy_classification', 
+            'taxonomy_specialization', 'data_quality_score'
+        ]
+        csv_content.append(','.join(f'"{col}"' for col in headers))
+        
+        # Export data in chunks
+        chunk_start = 0
+        while True:
+            print(f"Processing chunk starting at record {chunk_start:,}")
             
             with pg_conn.cursor() as cursor:
-                # Use server-side cursor for memory efficiency
-                cursor.execute(f"""
-                    SELECT 
-                        npi, entity_type, entity_name,
-                        provider_location_address_1, provider_location_address_2,
-                        provider_city, provider_state, provider_postal_code_clean, county_name, state_name,
-                        primary_taxonomy_code, taxonomy_grouping, taxonomy_classification, taxonomy_specialization,
-                        data_quality_score
-                    FROM nppes_providers_clean 
-                    ORDER BY npi
-                    LIMIT {chunk_size} OFFSET {processed_count};
-                """)
-                
+                # Get chunked data from the stored function
+                cursor.execute("SELECT npi, entity_type, entity_name, provider_location_address_1, provider_location_address_2, provider_city, provider_state, provider_postal_code_clean, county_name, state_name, primary_taxonomy_code, taxonomy_grouping, taxonomy_classification, taxonomy_specialization, data_quality_score FROM get_export_chunk(%s, %s)", (chunk_size, chunk_start))
                 rows = cursor.fetchall()
+                
                 if not rows:
+                    print(f"No more records found. Export complete.")
                     break
                 
-                # Get column names for header
-                if not headers_written:
-                    column_names = [desc[0] for desc in cursor.description]
-                    csv_content.append(','.join(f'"{col}"' for col in column_names))
-                    headers_written = True
+                print(f"Retrieved {len(rows)} rows in this chunk")
                 
                 # Convert rows to CSV format
                 for row in rows:
-                    # Handle None values and escape quotes
                     escaped_row = []
                     for i, value in enumerate(row):
                         if value is None:
                             escaped_row.append('""')
                         else:
                             # Special handling for ZIP codes to preserve leading zeros
-                            if column_names[i] == 'provider_postal_code_clean' and value is not None:
-                                # Ensure ZIP codes are always 5 digits with leading zeros
+                            if headers[i] == 'provider_postal_code_clean' and value is not None:
                                 str_value = str(value).zfill(5)
                             else:
-                                # Convert to string normally
                                 str_value = str(value)
                             
-                            # Escape quotes
+                            # Escape quotes and wrap in quotes
                             str_value = str_value.replace('"', '""')
                             escaped_row.append(f'"{str_value}"')
                     csv_content.append(','.join(escaped_row))
                 
                 processed_count += len(rows)
-                print(f"Processed {processed_count:,} / {total_count:,} records")
+                chunk_start += chunk_size
+                print(f"Processed {processed_count:,} records so far")
+                
+                # If we got less than the chunk size, we're done
+                if len(rows) < chunk_size:
+                    break
         
         pg_conn.close()
         
@@ -643,7 +606,7 @@ def export_clean_data_to_csv_chunked(chunk_size=50000, output_filename="nppes_cl
         print(f"Uploading CSV file: {output_filename}")
         upload_success = upload_csv_to_azure_blob(output_filename, final_csv)
         
-        if upload_success is None:  # Your upload function returns None on success
+        if upload_success is None:
             print(f"Successfully exported {processed_count:,} records to {output_filename}")
             return True
         else:
@@ -651,7 +614,7 @@ def export_clean_data_to_csv_chunked(chunk_size=50000, output_filename="nppes_cl
             return False
             
     except Exception as e:
-        print(f"Error during chunked CSV export: {e}")
+        print(f"Error during CSV export: {e}")
         if 'pg_conn' in locals():
             pg_conn.close()
         return False
