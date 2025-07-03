@@ -614,12 +614,20 @@ def export_clean_data_to_csv_chunked(chunk_size=50000, output_filename="nppes_cl
                 for row in rows:
                     # Handle None values and escape quotes
                     escaped_row = []
-                    for value in row:
+                    for i, value in enumerate(row):
                         if value is None:
                             escaped_row.append('""')
                         else:
-                            # Convert to string and escape quotes
-                            str_value = str(value).replace('"', '""')
+                            # Special handling for ZIP codes to preserve leading zeros
+                            if column_names[i] == 'provider_postal_code_clean' and value is not None:
+                                # Ensure ZIP codes are always 5 digits with leading zeros
+                                str_value = str(value).zfill(5)
+                            else:
+                                # Convert to string normally
+                                str_value = str(value)
+                            
+                            # Escape quotes
+                            str_value = str_value.replace('"', '""')
                             escaped_row.append(f'"{str_value}"')
                     csv_content.append(','.join(escaped_row))
                 
