@@ -6,8 +6,8 @@ on:
     branches: [main]
 
 jobs:
-  quality:
-    name: Code Quality
+  autofix:
+    name: Auto-fix formatting
     runs-on: ubuntu-latest
 
     steps:
@@ -24,8 +24,5 @@ jobs:
         python -m pip install --upgrade pip
         python -m pip install -r requirements.txt
 
-    - name: Check code formatting
-      run: black --check function_app.py
-
-    - name: Fix code formatting
+    - name: Run Black to fix formatting
       run: black function_app.py
